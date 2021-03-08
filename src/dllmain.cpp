@@ -1,97 +1,100 @@
 #include <stdafx.h>
 
+#include "CET.h"
+
 #include "Image.h"
 #include "Options.h"
 
-#include "d3d12/D3D12.h"
-#include "console/Console.h"
-#include "scripting/LuaVM.h"
-#include "window/Window.h"
+#ifndef NDEBUG
+#include "scripting/GameHooks.h"
+#endif
 
-#pragma comment( lib, "dbghelp.lib" )
-#pragma comment(linker, "/DLL")
+void EnableDebugPatch(const Image* apImage);
+void StartScreenPatch(const Image* apImage);
+void RemovePedsPatch(const Image* apImage);
+void OptionsPatch(const Image* apImage);
+void OptionsInitHook(const Image* apImage);
+void DisableIntroMoviesPatch(const Image* apImage);
+void DisableVignettePatch(const Image* apImage);
+void DisableBoundaryTeleportPatch(const Image* apImage);
 
-void EnableDebugPatch(Image* apImage);
-void VirtualInputPatch(Image* apImage);
-void SmtAmdPatch(Image* apImage);
-void StartScreenPatch(Image* apImage);
-void RemovePedsPatch(Image* apImage);
-void OptionsPatch(Image* apImage);
-void OptionsInitHook(Image* apImage);
-void DisableIntroMoviesPatch(Image* apImage);
-void DisableVignettePatch(Image* apImage);
-void DisableBoundaryTeleportPatch(Image* apImage);
+static HANDLE s_modInstanceMutex = nullptr;
 
-static HANDLE s_modInstanceMutex = nullptr; 
+using namespace std::chrono_literals;
 
-static void Initialize(HMODULE mod)
+static void Initialize()
 {
-    s_modInstanceMutex = CreateMutex(NULL, TRUE, _T("Cyber Engine Tweaks Module Instance"));
-    if (s_modInstanceMutex == nullptr)
-        return;
+    try
+    {
+        MH_Initialize();
 
-    MH_Initialize();
+        CET::Initialize();
 
-    Options::Initialize(mod);
-    auto& options = Options::Get();
+        const auto& options = CET::Get().GetOptions();
 
-    if (!options.IsCyberpunk2077() || options.GameImage.version != Image::MakeVersion(1,6))
-        return;
+        // single instance check
+        s_modInstanceMutex = CreateMutex(NULL, TRUE, _T("Cyber Engine Tweaks Module Instance"));
+        if (s_modInstanceMutex == nullptr)
+            return;
 
-    if(options.PatchSMT)
-        SmtAmdPatch(&options.GameImage);
+        // initialize patches
+        if (options.PatchEnableDebug)
+            EnableDebugPatch(&options.GameImage);
 
-    if (options.PatchVirtualInput)
-        VirtualInputPatch(&options.GameImage);
+        if (options.PatchSkipStartMenu)
+            StartScreenPatch(&options.GameImage);
 
-    if (options.PatchEnableDebug)
-        EnableDebugPatch(&options.GameImage);
+        if (options.PatchRemovePedestrians)
+            RemovePedsPatch(&options.GameImage);
 
-    if(options.PatchSkipStartMenu)
-        StartScreenPatch(&options.GameImage);
+        if (options.PatchAsyncCompute || options.PatchAntialiasing)
+            OptionsPatch(&options.GameImage);
 
-    if(options.PatchRemovePedestrians)
-        RemovePedsPatch(&options.GameImage);
+        if (options.PatchDisableIntroMovies)
+            DisableIntroMoviesPatch(&options.GameImage);
 
-    if(options.PatchAsyncCompute || options.PatchAntialiasing)
-        OptionsPatch(&options.GameImage);
+        if (options.PatchDisableVignette)
+            DisableVignettePatch(&options.GameImage);
 
-    if (options.PatchDisableIntroMovies)
-        DisableIntroMoviesPatch(&options.GameImage);
+        if (options.PatchDisableBoundaryTeleport)
+            DisableBoundaryTeleportPatch(&options.GameImage);
 
-    if (options.PatchDisableVignette)
-        DisableVignettePatch(&options.GameImage);
+        OptionsInitHook(&options.GameImage);
 
-    if (options.PatchDisableBoundaryTeleport)
-        DisableBoundaryTeleportPatch(&options.GameImage);
 
-    OptionsInitHook(&options.GameImage);
+#ifndef NDEBUG
+        // We only need to hook the game thread right now to do RTTI Dump, which is Debug-only
+        // if we need to queue tasks to the mainthread remove the debug check
+        GameMainThread::Initialize();
+#endif
 
-    Window::Initialize();
-
-    LuaVM::Initialize();
-
-    if(options.Console)
-        Console::Initialize();
-
-    D3D12::Initialize();
-
-    MH_EnableHook(MH_ALL_HOOKS);
-
-    spdlog::default_logger()->flush();
+        MH_EnableHook(MH_ALL_HOOKS);
+    }
+    catch(...)
+    {}
 }
 
 static void Shutdown()
 {
+    bool inGameProcess = false;
+
     if (s_modInstanceMutex)
     {
-        if(Options::Get().Console)
-            Console::Shutdown();
+        inGameProcess = CET::Get().GetOptions().ExeValid;
 
         MH_DisableHook(MH_ALL_HOOKS);
         MH_Uninitialize();
 
+        CET::Shutdown();
+
         ReleaseMutex(s_modInstanceMutex);
+    }
+
+    if (inGameProcess)
+    {
+        // flush main log (== default logger)
+        spdlog::default_logger()->flush();
+        spdlog::get("scripting")->flush();
     }
 }
 
@@ -102,7 +105,7 @@ BOOL APIENTRY DllMain(HMODULE mod, DWORD ul_reason_for_call, LPVOID)
     switch(ul_reason_for_call) 
     {
         case DLL_PROCESS_ATTACH:
-            Initialize(mod);
+            Initialize();
             break;
         case DLL_PROCESS_DETACH:
             Shutdown();

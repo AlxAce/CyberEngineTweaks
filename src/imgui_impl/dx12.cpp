@@ -246,7 +246,7 @@ void ImGui_ImplDX12_RenderDrawData(ImDrawData* apDrawData, ID3D12GraphicsCommand
     }
 }
 
-static void ImGui_ImplDX12_CreateFontsTexture()
+static void ImGui_ImplDX12_CreateFontsTexture(ID3D12CommandQueue* apCommandQueue)
 {
     // Build texture atlas
     ImGuiIO& io = ImGui::GetIO();
@@ -340,15 +340,6 @@ static void ImGui_ImplDX12_CreateFontsTexture()
         HANDLE event = CreateEvent(0, 0, 0, 0);
         IM_ASSERT(event != NULL);
 
-        D3D12_COMMAND_QUEUE_DESC queueDesc = {};
-        queueDesc.Type     = D3D12_COMMAND_LIST_TYPE_DIRECT;
-        queueDesc.Flags    = D3D12_COMMAND_QUEUE_FLAG_NONE;
-        queueDesc.NodeMask = 1;
-
-        ID3D12CommandQueue* cmdQueue = NULL;
-        hr = g_pd3dDevice->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&cmdQueue));
-        IM_ASSERT(SUCCEEDED(hr));
-
         ID3D12CommandAllocator* cmdAlloc = NULL;
         hr = g_pd3dDevice->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&cmdAlloc));
         IM_ASSERT(SUCCEEDED(hr));
@@ -363,8 +354,8 @@ static void ImGui_ImplDX12_CreateFontsTexture()
         hr = cmdList->Close();
         IM_ASSERT(SUCCEEDED(hr));
 
-        cmdQueue->ExecuteCommandLists(1, (ID3D12CommandList* const*)&cmdList);
-        hr = cmdQueue->Signal(fence, 1);
+        apCommandQueue->ExecuteCommandLists(1, (ID3D12CommandList* const*)&cmdList);
+        hr = apCommandQueue->Signal(fence, 1);
         IM_ASSERT(SUCCEEDED(hr));
 
         fence->SetEventOnCompletion(1, event);
@@ -372,7 +363,6 @@ static void ImGui_ImplDX12_CreateFontsTexture()
 
         cmdList->Release();
         cmdAlloc->Release();
-        cmdQueue->Release();
         CloseHandle(event);
         fence->Release();
         uploadBuffer->Release();
@@ -395,7 +385,7 @@ static void ImGui_ImplDX12_CreateFontsTexture()
     io.Fonts->TexID = (ImTextureID)g_hFontSrvGpuDescHandle.ptr;
 }
 
-bool ImGui_ImplDX12_CreateDeviceObjects()
+bool ImGui_ImplDX12_CreateDeviceObjects(ID3D12CommandQueue* apCommandQueue)
 {
     if (!g_pd3dDevice)
         return false;
@@ -451,28 +441,28 @@ bool ImGui_ImplDX12_CreateDeviceObjects()
             D3D12_ROOT_SIGNATURE_FLAG_DENY_GEOMETRY_SHADER_ROOT_ACCESS;
 
         // See if any version of d3d12.dll is already loaded in the process. If so, give preference to that.
-        static HINSTANCE d3d12_dll = ::GetModuleHandleA("d3d12.dll");
+        static HINSTANCE d3d12_dll = ::GetModuleHandle(_T("d3d12.dll"));
         if (d3d12_dll == NULL)
         {
             // Attempt to load d3d12.dll from local directories in decreasing order of likelihood. This will only succeed if
             // (1) the current OS is Windows 7, and
             // (2) there exists a version of d3d12.dll for Windows 7 (D3D12On7) in one of the following directories.
-            static const char* localD3d12Paths[] =
+            static const TCHAR* localD3d12Paths[] =
             {
-                ".\\d3d12on7\\d3d12.dll",   // used by some games
-                ".\\12on7\\d3d12.dll"       // used in the Microsoft D3D12On7 sample
+                _T(".\\d3d12on7\\d3d12.dll"),   // used by some games
+                _T(".\\12on7\\d3d12.dll")       // used in the Microsoft D3D12On7 sample
             };
 
             for (unsigned int i = 0; i < _countof(localD3d12Paths); i++)
             {
-                d3d12_dll = LoadLibraryA(localD3d12Paths[i]);
+                d3d12_dll = LoadLibrary(localD3d12Paths[i]);
                 if (d3d12_dll != NULL)
                     break;
             }
 
             // If failed, we should be on Windows 10.
             if (d3d12_dll == NULL)
-                d3d12_dll = ::LoadLibraryA("d3d12.dll"); 
+                d3d12_dll = ::LoadLibrary(_T("d3d12.dll")); 
         
             if (d3d12_dll == NULL)
                 return false;
@@ -628,7 +618,7 @@ bool ImGui_ImplDX12_CreateDeviceObjects()
     if (result_pipeline_state != S_OK)
         return false;
 
-    ImGui_ImplDX12_CreateFontsTexture();
+    ImGui_ImplDX12_CreateFontsTexture(apCommandQueue);
 
     return true;
 }
@@ -695,8 +685,8 @@ void ImGui_ImplDX12_Shutdown()
     g_frameIndex = UINT_MAX;
 }
 
-void ImGui_ImplDX12_NewFrame()
+void ImGui_ImplDX12_NewFrame(ID3D12CommandQueue* apCommandQueue)
 {
     if (!g_pPipelineState)
-        ImGui_ImplDX12_CreateDeviceObjects();
+        ImGui_ImplDX12_CreateDeviceObjects(apCommandQueue);
 }

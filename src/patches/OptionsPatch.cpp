@@ -1,8 +1,9 @@
+#include "CET.h"
+
 #include <stdafx.h>
 
 #include "Image.h"
 #include "Options.h"
-#include "Pattern.h"
 #include "scripting/GameOptions.h"
 
 bool HookGameOptionGetBoolean(GameOption* apThis, uint8_t* apVariable, GameOptionType aType)
@@ -11,7 +12,7 @@ bool HookGameOptionGetBoolean(GameOption* apThis, uint8_t* apVariable, GameOptio
     if (!pVariable)
         return false;
 
-    auto& options = Options::Get();
+    auto& options = CET::Get().GetOptions();
     if (options.PatchAsyncCompute && strcmp(apThis->pCategory, "Rendering/AsyncCompute") == 0)
     {
         *pVariable = false;
@@ -33,10 +34,11 @@ bool HookGameOptionGetBoolean(GameOption* apThis, uint8_t* apVariable, GameOptio
     return true;
 }
 
-void OptionsPatch(Image* apImage)
+void OptionsPatch(const Image* apImage)
 {
-    uint8_t* pLocation = FindSignature(apImage->pTextStart, apImage->pTextEnd,
-        { 0x44, 0x3A, 0x41, 0x28, 0x75, 0x11, 0x48, 0x8B, 0x41, 0x30, 0x48, 0x85, 0xC0 });
+    const mem::pattern cPattern("44 3A 41 28 75 11 48 8B 41 30 48 85 C0");
+    const mem::default_scanner cScanner(cPattern);
+    auto pLocation = cScanner(apImage->TextRegion).as<uint8_t*>();
 
     if (pLocation)
     {
@@ -58,7 +60,7 @@ void OptionsPatch(Image* apImage)
         spdlog::info("Hidden options patch: success");
     }
     else
-        spdlog::info("Hidden options patch: failed");
+        spdlog::warn("Hidden options patch: failed");
 }
 
 using TGameOptionInit = void*(void*);
@@ -77,19 +79,18 @@ void* HookGameOptionInit(GameOption* apThis)
         // GameOptionInit seems to be called twice per option, value isn't set until after the first call though
         // Since we've already seen this option once we can now grab the value
 
-        if(Options::Get().DumpGameOptions)
+        if (CET::Get().GetOptions().DumpGameOptions)
             spdlog::info(apThis->GetInfo());
     }
 
     return RealGameOptionInit(apThis);
 }
 
-void OptionsInitHook(Image* apImage)
+void OptionsInitHook(const Image* apImage)
 {
-    void* GameOptionInit = FindSignature(apImage->pTextStart, apImage->pTextEnd,
-        { 0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24, 0x10, 0x57,
-          0x48, 0x83, 0xEC, 0x40, 0x48, 0x8B, 0xF1, 0x48, 0x8D, 0x4C, 0x24, 0x20,
-          0xE8 });
+    const mem::pattern cPattern("48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 40 48 8B F1 48 8D 4C 24 20 E8");
+    const mem::default_scanner cScanner(cPattern);
+    auto GameOptionInit = cScanner(apImage->TextRegion).as<uint8_t*>();
 
     if (GameOptionInit)
     {
@@ -99,5 +100,5 @@ void OptionsInitHook(Image* apImage)
         spdlog::info("Hidden options hook: success");
     }
     else
-        spdlog::info("Hidden options hook: failed");
+        spdlog::warn("Hidden options hook: failed");
 }

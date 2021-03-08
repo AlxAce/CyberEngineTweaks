@@ -2,18 +2,31 @@
 
 #include "StrongReference.h"
 
-StrongReference::StrongReference(sol::state_view aView, StrongHandle aStrongHandle)
-    : Type(aView, static_cast<RED4ext::CClass*>(aStrongHandle.handle->GetParentType()))
-    , m_strongHandle(aStrongHandle)
+#include "CET.h"
+
+StrongReference::StrongReference(const TiltedPhoques::Lockable<sol::state, std::recursive_mutex>::Ref& aView,
+                                 RED4ext::Handle<RED4ext::IScriptable> aStrongHandle)
+    : ClassType(aView, nullptr)
+    , m_strongHandle(std::move(aStrongHandle))
 {
+    if (m_strongHandle)
+    {
+        m_pType = m_strongHandle->GetType();
+    }
 }
 
 StrongReference::~StrongReference()
 {
-    // Someday maybe actually free memory
+    // Nasty hack so that the Lua VM doesn't try to release game memory on shutdown
+    if (!CET::IsRunning())
+    {
+        m_strongHandle.instance = nullptr;
+        m_strongHandle.refCount = nullptr;
+    }
 }
 
-RED4ext::IScriptable* StrongReference::GetHandle()
+
+RED4ext::ScriptInstance StrongReference::GetHandle()
 {
-    return m_strongHandle.handle;
+    return m_strongHandle.instance;
 }

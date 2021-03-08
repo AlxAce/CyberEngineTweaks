@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common/D3D12Downlevel.h"
+#include "window/Window.h"
 
 using TResizeBuffersD3D12 = HRESULT(IDXGISwapChain*, UINT, UINT, UINT, DXGI_FORMAT, UINT);
 using TPresentD3D12 = HRESULT(IDXGISwapChain*, UINT, UINT);
@@ -10,20 +11,20 @@ using TExecuteCommandLists = void(ID3D12CommandQueue*, UINT, ID3D12CommandList* 
 
 struct D3D12
 {
-    static void Initialize();
-    static void Shutdown();
-    static D3D12& Get();
+    static const uint32_t g_numDownlevelBackbuffersRequired = 3; // Windows 7 only: number of buffers needed before we start rendering
 
+    D3D12(Window& aWindow, Paths& aPaths, Options& aOptions);
     ~D3D12();
     
-    void PassInputToImGui(bool aEnabled) { m_passInputToImGui = aEnabled; }
-    void CatchInputInImGui(bool aEnabled) { m_catchInputInImGui = aEnabled; }
-    
-    SIZE GetResolution() const { return m_outSize; }
+    void SetTrapInputInImGui(bool aEnabled);
+    [[nodiscard]] bool IsTrapInputInImGui() const noexcept { return m_trapInputInImGui; }
+    [[nodiscard]] bool IsInitialized() const noexcept { return m_initialized; }
+    [[nodiscard]] SIZE GetResolution() const noexcept { return m_outSize; }
 
     LRESULT OnWndProc(HWND ahWnd, UINT auMsg, WPARAM awParam, LPARAM alParam);
 
-    bool IsInitialized() const { return m_initialized; }
+    TiltedPhoques::Signal<void()> OnInitialized;
+    TiltedPhoques::Signal<void()> OnUpdate;
 
 protected:
     
@@ -31,13 +32,12 @@ protected:
 
     struct FrameContext
     {
-        CComPtr<ID3D12CommandAllocator> CommandAllocator;
-        CComPtr<ID3D12Resource> BackBuffer;
-        CComPtr<ID3D12Resource> MainRenderTargetResource;
+        CComPtr<ID3D12CommandAllocator> CommandAllocator { nullptr };
+        CComPtr<ID3D12Resource> BackBuffer { nullptr };
         D3D12_CPU_DESCRIPTOR_HANDLE MainRenderTargetDescriptor{ 0 };
     };
 
-    bool ResetState();
+    bool ResetState(bool aClearDownlevelBackbuffers = true);
     bool Initialize(IDXGISwapChain* apSwapChain);
     bool InitializeDownlevel(ID3D12CommandQueue* apCommandQueue, ID3D12Resource* apSourceTex2D, HWND ahWindow);
     bool InitializeImGui(size_t aBuffersCounts);
@@ -52,8 +52,6 @@ protected:
     
 private:
 
-    D3D12();
-
     TResizeBuffersD3D12* m_realResizeBuffersD3D12{ nullptr };
     TPresentD3D12* m_realPresentD3D12{ nullptr };
     TPresentD3D12Downlevel* m_realPresentD3D12Downlevel{ nullptr };
@@ -62,18 +60,21 @@ private:
     
     bool m_initialized{ false };
 
-    std::vector<FrameContext> m_frameContexts;
-    std::vector<CComPtr<ID3D12Resource>> m_downlevelBackbuffers;
-    CComPtr<IDXGISwapChain3> m_pdxgiSwapChain;
-    CComPtr<ID3D12Device> m_pd3d12Device;
-    CComPtr<ID3D12DescriptorHeap> m_pd3dRtvDescHeap;
-    CComPtr<ID3D12DescriptorHeap> m_pd3dSrvDescHeap;
-    CComPtr<ID3D12GraphicsCommandList> m_pd3dCommandList;
-    CComPtr<ID3D12CommandQueue> m_pCommandQueue;
-    uint32_t m_downlevelBufferIndex;
+    std::vector<FrameContext> m_frameContexts{ };
+    std::vector<ID3D12Resource*> m_downlevelBackbuffers{ };
+    IDXGISwapChain3* m_pdxgiSwapChain{ nullptr };
+    CComPtr<ID3D12Device> m_pd3d12Device{ nullptr };
+    CComPtr<ID3D12DescriptorHeap> m_pd3dRtvDescHeap{ nullptr };
+    CComPtr<ID3D12DescriptorHeap> m_pd3dSrvDescHeap{ nullptr };
+    CComPtr<ID3D12GraphicsCommandList> m_pd3dCommandList{ nullptr };
+    ID3D12CommandQueue* m_pCommandQueue{ nullptr };
+    uint32_t m_downlevelBufferIndex{ 0 };
     
     SIZE m_outSize{ };
     
-    bool m_passInputToImGui{ false };
-    bool m_catchInputInImGui{ false };
+    std::atomic_bool m_trapInputInImGui{ false };
+
+    Paths& m_paths;
+    Window& m_window;
+    Options& m_options;
 };

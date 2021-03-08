@@ -2,10 +2,6 @@
 
 #include "Converter.h"
 
-#include "BasicTypes.h"
-#include "Enum.h"
-#include "LuaRED.h"
-
 auto s_metaVisitor = [](auto... args) {
     return [=](auto&& f) mutable { f(args...); };
 }(
@@ -25,8 +21,10 @@ auto s_metaVisitor = [](auto... args) {
     LuaRED<EulerAngles, "EulerAngles">(),
     LuaRED<ItemID, "gameItemID">(),
     LuaRED<TweakDBID, "TweakDBID">(),
-    LuaRED<CName, "CName">(),
-    LuaRED<Enum, "Enum">()
+    CNameConverter(),
+    EnumConverter(),
+    ClassConverter(),
+    RawConverter() // Should always be last resort
     );
 
 size_t Converter::Size(RED4ext::IRTTIType* apRtti)
@@ -53,7 +51,7 @@ size_t Converter::Size(RED4ext::IRTTIType* apRtti)
     return s;
 }
 
-sol::object Converter::ToLua(RED4ext::CStackType& aResult, sol::state_view aLua)
+sol::object Converter::ToLua(RED4ext::CStackType& aResult, TiltedPhoques::Locked<sol::state, std::recursive_mutex>& aLua)
 {
     sol::object o = sol::nil;
     auto initLuaObject = [&](auto& x)
@@ -76,11 +74,11 @@ sol::object Converter::ToLua(RED4ext::CStackType& aResult, sol::state_view aLua)
     return o;
 }
 
-RED4ext::CStackType Converter::ToRED(sol::object aObject, RED4ext::IRTTIType* apRtti, TiltedPhoques::Allocator* apAllocator)
+RED4ext::CStackType Converter::ToRED(sol::object aObject, RED4ext::IRTTIType* apRtti,
+                                     TiltedPhoques::Allocator* apAllocator)
 {
     RED4ext::CStackType r;
-    auto initStackType = [&](auto& x)
-    {
+    auto initStackType = [&](auto& x) {
         if (x.Is(apRtti))
         {
             r = x.ToRED(aObject, apRtti, apAllocator);
@@ -89,12 +87,26 @@ RED4ext::CStackType Converter::ToRED(sol::object aObject, RED4ext::IRTTIType* ap
         return false;
     };
 
-    auto f = [initStackType](auto&&... xs)
-    {
-        (... && !initStackType(xs));
-    };
+    auto f = [initStackType](auto&&... xs) { (... && !initStackType(xs)); };
 
     s_metaVisitor(f);
 
     return r;
+}
+
+void Converter::ToRED(sol::object aObject, RED4ext::CStackType* apType)
+{
+    auto initStackType = [&](auto& x)
+    {
+        if (x.Is(apType->type))
+        {
+            x.ToRED(aObject, apType);
+            return true;
+        }
+        return false;
+    };
+
+    auto f = [initStackType](auto&&... xs) { (... && !initStackType(xs)); };
+
+    s_metaVisitor(f);
 }

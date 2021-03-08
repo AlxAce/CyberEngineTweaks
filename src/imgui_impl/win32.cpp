@@ -15,6 +15,8 @@
 
 #include "win32.h"
 
+#include "CET.h"
+
 // CHANGELOG
 // (minor and older changes stripped away, please see git history for details)
 //  2020-12-04: Misc: Fixed setting of io.DisplaySize to invalid/uninitialized data when after hwnd has been closed.
@@ -46,6 +48,7 @@ static HWND             g_hWnd = NULL;
 static INT64            g_Time = 0;
 static INT64            g_TicksPerSecond = 0;
 static ImGuiMouseCursor g_LastMouseCursor = ImGuiMouseCursor_COUNT;
+static std::string      g_LayoutPath = "";
 
 // Functions
 bool ImGui_ImplWin32_Init(HWND ahWnd)
@@ -60,8 +63,13 @@ bool ImGui_ImplWin32_Init(HWND ahWnd)
     ImGuiIO& io = ImGui::GetIO();
     io.BackendFlags |= ImGuiBackendFlags_HasMouseCursors;         // We can honor GetMouseCursor() values (optional)
     io.BackendFlags |= ImGuiBackendFlags_HasSetMousePos;          // We can honor io.WantSetMousePos requests (optional, rarely used)
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.BackendPlatformName = "imgui_impl_win32";
     io.ImeWindowHandle = ahWnd;
+
+    // Setup ini path
+    g_LayoutPath = (CET::Get().GetPaths().CETRoot() / "layout.ini").string();
+    io.IniFilename = g_LayoutPath.c_str();
 
     // Keyboard mapping. ImGui will use those indices to peek into the io.KeysDown[] array that we will update during the application lifetime.
     io.KeyMap[ImGuiKey_Tab] = VK_TAB;
@@ -148,7 +156,7 @@ static void ImGui_ImplWin32_UpdateMousePos(SIZE aOutSize)
             if (::GetCursorPos(&pos) && ::ScreenToClient(g_hWnd, &pos))
                 if (!aOutSize.cx || !aOutSize.cy)
                     io.MousePos = ImVec2((float)pos.x, (float)pos.y);
-                else 
+                else
                 {
                     RECT clientRect;
                     ::GetClientRect(g_hWnd, &clientRect);
@@ -166,9 +174,7 @@ void ImGui_ImplWin32_NewFrame(SIZE aOutSize)
     IM_ASSERT(io.Fonts->IsBuilt() && "Font atlas not built! It is generally built by the renderer backend. Missing call to renderer _NewFrame() function? e.g. ImGui_ImplOpenGL3_NewFrame().");
 
     // Setup display size (every frame to accommodate for window resizing)
-    RECT rect = { 0, 0, 0, 0 };
-    ::GetClientRect(g_hWnd, &rect);
-    io.DisplaySize = ImVec2((float)(rect.right - rect.left), (float)(rect.bottom - rect.top));
+    io.DisplaySize = { static_cast<float>(aOutSize.cx), static_cast<float>(aOutSize.cy) };
 
     // Setup time step
     INT64 current_time = 0;
@@ -319,7 +325,7 @@ void ImGui_ImplWin32_EnableDpiAwareness()
 {
     // if (IsWindows10OrGreater()) // This needs a manifest to succeed. Instead we try to grab the function pointer!
     {
-        static HINSTANCE user32_dll = ::LoadLibraryA("user32.dll"); // Reference counted per-process
+        static HINSTANCE user32_dll = ::LoadLibrary(_T("user32.dll")); // Reference counted per-process
         if (PFN_SetThreadDpiAwarenessContext SetThreadDpiAwarenessContextFn = (PFN_SetThreadDpiAwarenessContext)::GetProcAddress(user32_dll, "SetThreadDpiAwarenessContext"))
         {
             SetThreadDpiAwarenessContextFn(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
@@ -328,7 +334,7 @@ void ImGui_ImplWin32_EnableDpiAwareness()
     }
     if (IsWindows8Point1OrGreater())
     {
-        static HINSTANCE shcore_dll = ::LoadLibraryA("shcore.dll"); // Reference counted per-process
+        static HINSTANCE shcore_dll = ::LoadLibrary(_T("shcore.dll")); // Reference counted per-process
         if (PFN_SetProcessDpiAwareness SetProcessDpiAwarenessFn = (PFN_SetProcessDpiAwareness)::GetProcAddress(shcore_dll, "SetProcessDpiAwareness"))
         {
             SetProcessDpiAwarenessFn(PROCESS_PER_MONITOR_DPI_AWARE);
@@ -350,7 +356,7 @@ float ImGui_ImplWin32_GetDpiScaleForMonitor(HMONITOR ahMonitor)
     static BOOL bIsWindows8Point1OrGreater = IsWindows8Point1OrGreater();
     if (bIsWindows8Point1OrGreater)
     {
-        static HINSTANCE shcore_dll = ::LoadLibraryA("shcore.dll"); // Reference counted per-process
+        static HINSTANCE shcore_dll = ::LoadLibrary(_T("shcore.dll")); // Reference counted per-process
         if (PFN_GetDpiForMonitor GetDpiForMonitorFn = (PFN_GetDpiForMonitor)::GetProcAddress(shcore_dll, "GetDpiForMonitor"))
             GetDpiForMonitorFn(ahMonitor, MDT_EFFECTIVE_DPI, &xdpi, &ydpi);
     }

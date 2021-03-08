@@ -4,34 +4,60 @@ struct Type
 {
     struct Descriptor
     {
-        std::string name{"Unknown"};
+        std::string name{ "Unknown" };
         std::vector<std::string> functions;
         std::vector<std::string> staticFunctions;
         std::vector<std::string> properties;
 
         std::string ToString() const;
     };
-    
-    Type(sol::state_view aView, RED4ext::CClass* apClass);
 
-    sol::object Index(const std::string& acName);
+    Type(const TiltedPhoques::Lockable<sol::state, std::recursive_mutex>::Ref& aView, RED4ext::IRTTIType* apClass);
+    virtual ~Type(){};
+
+    sol::object Index(const std::string& acName, sol::this_environment aThisEnv);
     sol::object NewIndex(const std::string& acName, sol::object aParam);
-    sol::protected_function InternalIndex(const std::string& acName);
+
+    virtual sol::object Index_Impl(const std::string& acName, sol::this_environment aThisEnv);
+    virtual sol::object NewIndex_Impl(const std::string& acName, sol::object aParam);
+
     std::string GetName() const;
-    Descriptor Dump(bool aWithHashes) const;
+    virtual Descriptor Dump(bool aWithHashes) const;
+    std::string GameDump();
+
     std::string FunctionDescriptor(RED4ext::CBaseFunction* apFunc, bool aWithHashes) const;
-    
-    sol::variadic_results Execute(RED4ext::CClassFunction* apFunc, const std::string& acName, sol::variadic_args args, sol::this_environment env, sol::this_state L, std::string& aReturnMessage);
+    sol::variadic_results Execute(RED4ext::CBaseFunction* apFunc, const std::string& acName, sol::variadic_args args, std::string& aReturnMessage);
 
 protected:
-    virtual RED4ext::IScriptable* GetHandle() { return nullptr; }
+    virtual RED4ext::ScriptInstance GetHandle() { return nullptr; }
 
-    RED4ext::CClass* m_pType{ nullptr };
+    RED4ext::IRTTIType* m_pType{ nullptr };
 
     friend struct Scripting;
-    
-private:
-    sol::state_view m_lua;
+
+    TiltedPhoques::Lockable<sol::state, std::recursive_mutex>::Ref m_lua;
     std::unordered_map<std::string, sol::object> m_properties;
 };
 
+struct ClassType : Type
+{
+    ClassType(const TiltedPhoques::Lockable<sol::state, std::recursive_mutex>::Ref& aView, RED4ext::IRTTIType* apClass);
+    virtual ~ClassType(){};
+
+    Descriptor Dump(bool aWithHashes) const override;
+    sol::object Index_Impl(const std::string& acName, sol::this_environment aThisEnv) override;
+    sol::object NewIndex_Impl(const std::string& acName, sol::object aParam) override;
+};
+
+struct UnknownType : Type
+{
+    UnknownType(const TiltedPhoques::Lockable<sol::state, std::recursive_mutex>::Ref& aView,
+                RED4ext::IRTTIType* apClass,
+                RED4ext::ScriptInstance apInstance);
+
+    Descriptor Dump(bool aWithHashes) const override;
+    RED4ext::ScriptInstance GetHandle()  override { return m_pInstance.get(); }
+
+private:
+    std::unique_ptr<uint8_t[]> m_pInstance;
+};

@@ -4,6 +4,11 @@ struct Image
 {
     void Initialize();
 
+	static std::tuple<uint32_t, uint16_t> GetSupportedVersion() noexcept
+	{
+        return std::make_tuple(1, 12);
+	}
+
     static uint64_t MakeVersion(uint32_t aMajor, uint16_t aMinor) noexcept
     {
         return static_cast<uint64_t>(aMajor) << 32 | static_cast<uint64_t>(aMinor) << 16;
@@ -16,6 +21,5 @@ struct Image
 
     uint64_t version{0};
     uintptr_t base_address;
-    uint8_t* pTextStart;
-    uint8_t* pTextEnd;
+    mem::region TextRegion;
 };

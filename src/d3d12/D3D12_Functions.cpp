@@ -6,22 +6,20 @@
 #include <imgui_impl/dx12.h>
 #include <imgui_impl/win32.h>
 
-#include <console/Console.h>
-#include <scripting/LuaVM.h>
+#include <window/Window.h>
+#include "Options.h"
 
-#include "window/Window.h"
-
-bool D3D12::ResetState()
+bool D3D12::ResetState(bool aClearDownlevelBackbuffers)
 {
     if (m_initialized)
     {   
         m_initialized = false;
         ImGui_ImplDX12_Shutdown();
         ImGui_ImplWin32_Shutdown();
-        ImGui::DestroyContext();
     }
     m_frameContexts.clear();
-    m_downlevelBackbuffers.clear();
+    if (aClearDownlevelBackbuffers)
+        m_downlevelBackbuffers.clear();
     m_pdxgiSwapChain = nullptr;
     m_pd3d12Device = nullptr;
     m_pd3dRtvDescHeap = nullptr;
@@ -61,7 +59,7 @@ bool D3D12::Initialize(IDXGISwapChain* apSwapChain)
     if (!apSwapChain)
         return false;
 
-    HWND hWnd = Window::Get().GetWindow();
+    HWND hWnd = m_window.GetWindow();
     if (!hWnd)
     {
         spdlog::warn("D3D12::InitializeDownlevel() - window not yet hooked!");
@@ -70,7 +68,7 @@ bool D3D12::Initialize(IDXGISwapChain* apSwapChain)
 
     if (m_initialized) 
     {
-        CComPtr<IDXGISwapChain3> pSwapChain3;
+        IDXGISwapChain3* pSwapChain3{ nullptr };
         if (FAILED(apSwapChain->QueryInterface(IID_PPV_ARGS(&pSwapChain3))))
         {
             spdlog::error("D3D12::Initialize() - unable to query pSwapChain interface for IDXGISwapChain3! (pSwapChain = {0})", reinterpret_cast<void*>(apSwapChain));
@@ -182,6 +180,8 @@ bool D3D12::Initialize(IDXGISwapChain* apSwapChain)
         return false;
     }
 
+    OnInitialized.Emit();
+
     return true;
 }
 
@@ -190,7 +190,7 @@ bool D3D12::InitializeDownlevel(ID3D12CommandQueue* apCommandQueue, ID3D12Resour
     if (!apCommandQueue || !apSourceTex2D)
         return false;
 
-    HWND hWnd = Window::Get().GetWindow();
+    HWND hWnd = m_window.GetWindow();
     if (!hWnd)
     {
         spdlog::warn("D3D12::InitializeDownlevel() - window not yet hooked!");
@@ -226,13 +226,17 @@ bool D3D12::InitializeDownlevel(ID3D12CommandQueue* apCommandQueue, ID3D12Resour
         return ResetState();
     }
 
-    // Limit to at most 3 buffers
-    const auto buffersCounts = std::min<size_t>(m_downlevelBackbuffers.size(), 3);
+    const size_t buffersCounts = m_downlevelBackbuffers.size();
     m_frameContexts.resize(buffersCounts);
     if (buffersCounts == 0)
     {
         spdlog::error("D3D12::InitializeDownlevel() - no backbuffers were found!");
         return ResetState();
+    }
+    if (buffersCounts < g_numDownlevelBackbuffersRequired)
+    {
+        spdlog::info("D3D12::InitializeDownlevel() - backbuffer list is not complete yet; assuming window was resized");
+        return false;
     }
 
     D3D12_DESCRIPTOR_HEAP_DESC rtvdesc;
@@ -285,12 +289,10 @@ bool D3D12::InitializeDownlevel(ID3D12CommandQueue* apCommandQueue, ID3D12Resour
         return ResetState();
     }
 
-    // Skip the first N - 3 buffers as they are no longer in use
-    auto skip = m_downlevelBackbuffers.size() - buffersCounts;
     for (size_t i = 0; i < buffersCounts; i++)
     {
         auto& context = m_frameContexts[i];
-        context.BackBuffer = m_downlevelBackbuffers[i + skip];
+        context.BackBuffer = m_downlevelBackbuffers[i];
         m_pd3d12Device->CreateRenderTargetView(context.BackBuffer, nullptr, context.MainRenderTargetDescriptor);
     }
 
@@ -303,22 +305,64 @@ bool D3D12::InitializeDownlevel(ID3D12CommandQueue* apCommandQueue, ID3D12Resour
     spdlog::info("D3D12::InitializeDownlevel() - initialization successful!");
     m_initialized = true;
 
+    OnInitialized.Emit();
+
     return true;
 }
 
 bool D3D12::InitializeImGui(size_t aBuffersCounts)
 {
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO();
-    ImGui::StyleColorsDark();
-    io.Fonts->AddFontDefault();
-    io.IniFilename = NULL;
+    if (ImGui::GetCurrentContext() == nullptr)
+    {
+        // do this once, do not repeat context creation!
+        IMGUI_CHECKVERSION();
+        ImGui::CreateContext();
+        ImGuiIO& io = ImGui::GetIO();
+        ImGui::StyleColorsDark();
+
+        ImFontConfig config;
+        config.SizePixels = m_options.FontSize;
+        config.OversampleH = config.OversampleV = 1;
+        config.PixelSnapH = true;
+        io.Fonts->AddFontDefault(&config);
+        
+        if (!m_options.FontPath.empty())
+        {
+            std::filesystem::path fontPath(m_options.FontPath);
+            if (!fontPath.is_absolute())
+            {
+                fontPath = m_paths.CETRoot() / fontPath;
+            }
+            if (exists(fontPath))
+            {
+                const ImWchar* cpGlyphRanges = io.Fonts->GetGlyphRangesDefault();
+                if (m_options.FontGlyphRanges == "ChineseFull")
+                    cpGlyphRanges = io.Fonts->GetGlyphRangesChineseFull();
+                else if (m_options.FontGlyphRanges == "ChineseSimplifiedCommon")
+                    cpGlyphRanges = io.Fonts->GetGlyphRangesChineseSimplifiedCommon();
+                else if (m_options.FontGlyphRanges == "Japanese")
+                    cpGlyphRanges = io.Fonts->GetGlyphRangesJapanese();
+                else if (m_options.FontGlyphRanges == "Korean")
+                    cpGlyphRanges = io.Fonts->GetGlyphRangesKorean();
+                else if (m_options.FontGlyphRanges == "Cyrillic")
+                    cpGlyphRanges = io.Fonts->GetGlyphRangesCyrillic();
+                else if (m_options.FontGlyphRanges == "Thai")
+                    cpGlyphRanges = io.Fonts->GetGlyphRangesThai();
+                else if (m_options.FontGlyphRanges == "Vietnamese")
+                    cpGlyphRanges = io.Fonts->GetGlyphRangesVietnamese();
+                ImFont* pFont =
+                    io.Fonts->AddFontFromFileTTF(fontPath.string().c_str(), m_options.FontSize, nullptr, cpGlyphRanges);
+                if (pFont != nullptr)
+                {
+                    io.FontDefault = pFont;
+                }
+            }
+        }
+    }
     
-    if (!ImGui_ImplWin32_Init(Window::Get().GetWindow())) 
+    if (!ImGui_ImplWin32_Init(m_window.GetWindow())) 
     {
         spdlog::error("D3D12::InitializeImGui() - ImGui_ImplWin32_Init call failed!");
-        ImGui::DestroyContext();
         return false;
     }
 
@@ -329,16 +373,14 @@ bool D3D12::InitializeImGui(size_t aBuffersCounts)
     {
         spdlog::error("D3D12::InitializeImGui() - ImGui_ImplDX12_Init call failed!");
         ImGui_ImplWin32_Shutdown();
-        ImGui::DestroyContext();
         return false;
     }
 
-    if (!ImGui_ImplDX12_CreateDeviceObjects()) 
+    if (!ImGui_ImplDX12_CreateDeviceObjects(m_pCommandQueue)) 
     {
         spdlog::error("D3D12::InitializeImGui() - ImGui_ImplDX12_CreateDeviceObjects call failed!");
         ImGui_ImplDX12_Shutdown();
         ImGui_ImplWin32_Shutdown();
-        ImGui::DestroyContext();
         return false;
     }
 
@@ -347,14 +389,11 @@ bool D3D12::InitializeImGui(size_t aBuffersCounts)
 
 void D3D12::Update()
 {
-    ImGui_ImplDX12_NewFrame();
+    ImGui_ImplDX12_NewFrame(m_pCommandQueue);
     ImGui_ImplWin32_NewFrame(m_outSize);
     ImGui::NewFrame();
 
-    // TODO: better deltaTime! now, we abuse ImGui's IO here...
-    LuaVM::Get().Update(ImGui::GetIO().DeltaTime);
-    
-    Console::Get().Update();
+    OnUpdate.Emit();
 
     const auto bufferIndex = (m_pdxgiSwapChain != nullptr) ? (m_pdxgiSwapChain->GetCurrentBackBufferIndex()) : (m_downlevelBufferIndex);
     auto& frameContext = m_frameContexts[bufferIndex];

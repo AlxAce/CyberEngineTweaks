@@ -1,19 +1,20 @@
 #pragma once
 
 #include "Type.h"
-#include "BasicTypes.h"
 
-struct StrongReference : Type
+struct StrongReference : ClassType
 {
-    StrongReference(sol::state_view aView, StrongHandle aStrongHandle);
-    ~StrongReference();
-    
+    StrongReference(const TiltedPhoques::Lockable<sol::state, std::recursive_mutex>::Ref& aView,
+                    RED4ext::Handle<RED4ext::IScriptable> aStrongHandle);
+    virtual ~StrongReference();
+
 protected:
 
-    virtual RED4ext::IScriptable* GetHandle();
+    virtual RED4ext::ScriptInstance GetHandle();
     
 private:
     friend struct Scripting;
+    friend struct TweakDB;
     
-    StrongHandle m_strongHandle;
+    RED4ext::Handle<RED4ext::IScriptable> m_strongHandle;
 };

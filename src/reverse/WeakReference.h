@@ -1,19 +1,20 @@
 #pragma once
 
 #include "Type.h"
-#include "BasicTypes.h"
 
-struct WeakReference : Type
+struct WeakReference : ClassType
 {
-    WeakReference(sol::state_view aView, WeakHandle aWeakHandle);
-    ~WeakReference();
-    
+    WeakReference(const TiltedPhoques::Lockable<sol::state, std::recursive_mutex>::Ref& aView,
+                  RED4ext::WeakHandle<RED4ext::IScriptable> aWeakHandle);
+    virtual ~WeakReference();
+
 protected:
 
-    virtual RED4ext::IScriptable* GetHandle();
+    virtual RED4ext::ScriptInstance GetHandle();
     
 private:
     friend struct Scripting;
+    friend struct TweakDB;
     
-    WeakHandle m_weakHandle;
+    RED4ext::WeakHandle<RED4ext::IScriptable> m_weakHandle;
 };

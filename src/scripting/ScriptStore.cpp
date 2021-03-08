@@ -2,51 +2,62 @@
 
 #include "ScriptStore.h"
 
-#include "Options.h"
-
-ScriptStore::ScriptStore()
+ScriptStore::ScriptStore(LuaSandbox& aLuaSandbox, const Paths& aPaths, VKBindings& aBindings)
+    : m_sandbox(aLuaSandbox)
+    , m_paths(aPaths)
+    , m_bindings(aBindings)
 {
-    
 }
 
-ScriptStore::~ScriptStore()
+void ScriptStore::LoadAll()
 {
-
-}
-
-void ScriptStore::LoadAll(sol::state_view aStateView)
-{
+    m_vkBindInfos.clear();
     m_contexts.clear();
+    m_sandbox.ResetState();
 
-    const auto cScriptsPath = Options::Get().ScriptsPath;
+    auto consoleLogger = spdlog::get("scripting");
 
-    for (const auto& file : std::filesystem::directory_iterator(cScriptsPath))
+    const auto& cModsRoot = m_paths.ModsRoot();
+    for (const auto& file : std::filesystem::directory_iterator(cModsRoot))
     {
         if (!file.is_directory())
             continue;
 
-        if (!exists(file.path() / "init.lua"))
+        auto fPath = file.path();
+        auto fPathStr = fPath.string();
+        if (!exists(fPath / "init.lua"))
+        {
+            consoleLogger->warn("Ignoring directory that does not contain init.lua! ('{}')", fPathStr);
             continue;
+        }
 
-        auto name = relative(file.path(), cScriptsPath).string();
+        auto name = relative(fPath, cModsRoot).string();
+        if (name.find('.') != std::string::npos)
+        {
+            consoleLogger->info("Ignoring directory containing '.', as this is reserved character! ('{}')", fPathStr);
+            continue;
+        }
 
-        auto ctx = ScriptContext{ aStateView, file.path() };
+        auto ctx = ScriptContext{m_sandbox, file.path(), name};
         if (ctx.IsValid())
         {
-            spdlog::info("Mod {} loaded!", file.path().string());
+            auto& ctxBinds = ctx.GetBinds();
+            m_vkBindInfos.insert(m_vkBindInfos.cend(), ctxBinds.cbegin(), ctxBinds.cend());
             m_contexts.emplace(name, std::move(ctx));
+            consoleLogger->info("Mod {} loaded! ('{}')", name, fPathStr);
         }
         else
         {
-            spdlog::warn("Mod {} failed to load!", file.path().string());
+            consoleLogger->error("Mod {} failed to load! ('{}')", name, fPathStr);
         }
     }
+
+    m_bindings.InitializeMods(m_vkBindInfos);
 }
 
-void ScriptStore::TriggerOnUpdate(float aDeltaTime) const
+const std::vector<VKBindInfo>& ScriptStore::GetBinds() const
 {
-    for (const auto& kvp : m_contexts)
-        kvp.second.TriggerOnUpdate(aDeltaTime);
+    return m_vkBindInfos;
 }
 
 void ScriptStore::TriggerOnInit() const
@@ -55,11 +66,35 @@ void ScriptStore::TriggerOnInit() const
         kvp.second.TriggerOnInit();
 }
 
-sol::object ScriptStore::Get(const std::string& acName) const
+void ScriptStore::TriggerOnUpdate(float aDeltaTime) const
+{
+    for (const auto& kvp : m_contexts)
+        kvp.second.TriggerOnUpdate(aDeltaTime);
+}
+
+void ScriptStore::TriggerOnDraw() const
+{
+    for (const auto& kvp : m_contexts)
+        kvp.second.TriggerOnDraw();
+}
+
+void ScriptStore::TriggerOnOverlayOpen() const
+{
+    for (const auto& kvp : m_contexts)
+        kvp.second.TriggerOnOverlayOpen();
+}
+
+void ScriptStore::TriggerOnOverlayClose() const
+{
+    for (const auto& kvp : m_contexts)
+        kvp.second.TriggerOnOverlayClose();
+}
+
+sol::object ScriptStore::GetMod(const std::string& acName) const
 {
     const auto itor = m_contexts.find(acName);
     if (itor != std::end(m_contexts))
-        return itor->second.GetObject();
+        return itor->second.GetRootObject();
 
     return sol::nil;
 }

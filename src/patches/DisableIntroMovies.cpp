@@ -1,7 +1,6 @@
 #include <stdafx.h>
 
 #include "Image.h"
-#include "Pattern.h"
 
 using TInitScriptMemberVariable = void*(void* a1, void* a2, uint64_t a3, uint64_t nameHash, void* a5, void* a6, void* a7);
 TInitScriptMemberVariable* RealInitScriptMemberVariable = nullptr;
@@ -29,15 +28,16 @@ void* HookInitScriptMemberVariable(void* a1, void* a2, uint64_t a3, uint64_t nam
     return RealInitScriptMemberVariable(a1, a2, a3, nameHash, a5, a6, a7);
 }
 
-void DisableIntroMoviesPatch(Image* apImage)
+void DisableIntroMoviesPatch(const Image* apImage)
 {
-    RealInitScriptMemberVariable = reinterpret_cast<TInitScriptMemberVariable*>(FindSignature(apImage->pTextStart, apImage->pTextEnd, {
-        0x48, 0x89, 0x5C, 0x24, 0x08, 0x57, 0x48, 0x83, 0xEC, 0x20, 0x48, 0x8B, 0x44, 0x24, 0x50, 0x48, 0x8B, 0xD9, 0x48, 0x89, 0x41, 0x08
-        }));
+    const mem::pattern cPattern("48 89 5C 24 08 57 48 83 EC 20 48 8B 44 24 50 48 8B D9 48 89 41 08");
+    const mem::default_scanner scanner(cPattern);
+
+    RealInitScriptMemberVariable = scanner(apImage->TextRegion).as<TInitScriptMemberVariable*>();
 
     if (RealInitScriptMemberVariable == nullptr)
     {
-        spdlog::info("Disable intro movies patch: failed, could not be found");
+        spdlog::warn("Disable intro movies patch: failed, could not be found");
         return;
     }
 
